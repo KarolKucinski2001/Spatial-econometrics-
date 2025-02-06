@@ -1,0 +1,525 @@
+---
+title: "Untitled"
+author: "Maciej Nagły, Karol Kuciński, Mateusz Mulka"
+date: "2024-10-30"
+output: html_document
+---
+Województwa
+
+Dane:
+```{r}
+#install.packages("readxl")
+#install.packages("sf")
+#install.packages("spdep")
+library(sp)
+library(spdep)
+library(readxl)
+library(tidyverse)
+library("sf")
+dane <- read_excel("C:/Users/mnexp/Desktop/Studia II stopien/EkonometriaPrzestrzenna/Powiaty_polska.xlsx")
+mapka <- st_read("C:/Users/mnexp/Desktop/Studia II stopien/EkonometriaPrzestrzenna/powiaty.shp")
+test.sf <- mapka %>%
+  left_join(dane) %>%
+  st_as_sf(crs = 4326)
+```
+
+Mapka
+
+```{r}
+# Definiowanie przedziałów
+library(BAMMtools)
+getJenksBreaks(dane$ogółem, 6)
+
+test.sf$ogółem_cat <- cut(test.sf$ogółem, 
+                          breaks = c(15633, 9119, 6657, 5179, 4057, 2389), 
+                          labels = c("4057 - 2389", "5179 - 4058", "6657 - 5180", "9119 - 6658", "15633 - 9120"))
+
+test.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = ogółem_cat)) +
+  scale_fill_manual(values = c("lightblue", "skyblue", "steelblue", "darkblue", "navy")) + # Ustawianie kolorów dla przedziałów
+  theme_bw() +
+  labs(fill = "Średnia cena za metr^2")
+```
+
+Maierz sasiedztwa
+```{r}
+mapka_spatial <- as_Spatial(test.sf)
+sasiad1 <- poly2nb(mapka_spatial)
+macierz_sasiedztwa <- nb2mat(sasiad1, style = "B", zero.policy = TRUE)
+macierz_sasiedztwa_listw <- nb2listw(sasiad1, style = "B", zero.policy = TRUE)
+
+```
+macierz  sasiedztwa 4 rzedu
+```{r}
+# Stworzenie listy sąsiedztwa rzędu 1
+sasiedzi <- poly2nb(test.sf)
+
+# Liczba sąsiadów
+n <- length(sasiedzi)
+
+# Stworzenie macierzy odległości
+macierz_odleglosci <- matrix(Inf, n, n)
+macierz_odleglosci[nb2mat(sasiedzi, style = "B", zero.policy = TRUE) == 1] <- 1
+
+# Ustawienie macierzy symetrycznej
+macierz_odleglosci <- pmin(macierz_odleglosci, t(macierz_odleglosci))
+diag(macierz_odleglosci) <- 0
+
+# Inicjalizacja odkrytych sąsiadów
+odkryci_sasiedzi <- macierz_odleglosci == 1
+
+# Iteracja dla kolejnych rzędów sąsiedztwa
+for (rzad in 2:(n - 1)) {
+  nowi_sasiedzi <- odkryci_sasiedzi %*% (macierz_odleglosci == 1) > 0
+  
+  # Aktualizujemy odległości dla nowych sąsiadów
+  nowi_sasiedzi[macierz_odleglosci < Inf] <- FALSE  # Pomijamy już znalezione odległości
+  macierz_odleglosci[nowi_sasiedzi] <- rzad
+  
+  # Przerwij, jeśli nie ma nowych sąsiadów
+  if (!any(nowi_sasiedzi)) {
+    break
+  }
+  
+  # Aktualizuj macierz odkrytych sąsiadów
+  odkryci_sasiedzi <- odkryci_sasiedzi | nowi_sasiedzi
+}
+
+# Ustawienie wartości Inf na 0
+macierz_odleglosci[is.infinite(macierz_odleglosci)] <- 0
+macierz_odleglosci[macierz_odleglosci > 5] <- 0
+
+# Tworzenie listy sąsiedztwa na podstawie macierzy odległości
+macierz_wag <- ifelse(macierz_odleglosci > 0, 1 / macierz_odleglosci, 0)
+macierz_odleglosci_sasiad4_listw <- mat2listw(macierz_wag, style = "B", zero.policy = TRUE)
+```
+
+macierz sasiedztwa oparta na centroidach
+
+```{r}
+# Obliczanie centroidów dla każdego województwa
+centroidy <- st_centroid(test.sf)
+
+# Obliczanie odległości między centroidami (domyślnie w metrach)
+macierz_odleglosci <- st_distance(centroidy)
+
+# Przekształcenie wyniku na kilometry
+macierz_odleglosci_km <- as.numeric(macierz_odleglosci) / 1000
+macierz_odleglosci_km <- matrix(macierz_odleglosci_km, nrow = nrow(test.sf), ncol = nrow(test.sf))
+
+# Zaokrąglenie odległości do 2 miejsc po przecinku
+macierz_odleglosci_zaokraglone <- round(macierz_odleglosci_km, 2)
+
+# Tworzenie listy sąsiedztwa na podstawie odległości
+# Ustal próg odległości, poniżej którego uznajemy jednostki za sąsiadujące
+prog_odleglosci <- 50 # Możesz ustawić inny próg w kilometrach
+
+# Tworzenie macierzy wag na podstawie odległości
+macierz_wag <- ifelse(macierz_odleglosci_km > prog_odleglosci, 1 / macierz_odleglosci_km, 0)
+
+# Zmiana macierzy wag na listę sąsiedztwa
+macierz_centroid_listw <- mat2listw(macierz_wag, style = "B", zero.policy = TRUE)
+```
+
+
+### statystyki
+
+Statystyka 𝐶 Geary’ego Dla różnych macierzy wag:
+
+macier sasiedztwa rzedu 1
+
+```{r}
+library(spdep)
+
+variable <- test.sf$ogółem
+
+geary_c <- geary.test(variable, listw = macierz_sasiedztwa_listw, zero.policy = TRUE)
+
+G <- geary_c$estimate["Geary C statistic"]
+E_G <- geary_c$estimate["Expectation"]
+Var_G <- geary_c$estimate["Variance"]
+
+if (Var_G > 0) {
+  Z_calculated <- (G - E_G) / sqrt(Var_G)
+} else {
+  Z_calculated <- NA
+  warning("Wariancja Var[C] jest ujemna lub zero, nie można obliczyć statystyki Z.")
+}
+
+
+set.seed(123)
+n_permutations <- 10000
+G_permutations <- numeric(n_permutations)
+
+geary_c_statistic <- geary.test(variable, listw = macierz_sasiedztwa_listw, zero.policy = TRUE)$estimate["Geary C statistic"]
+
+for (i in 1:n_permutations) {
+  variable_permuted <- sample(variable)
+  permuted_getis <- geary.test(variable_permuted, listw = macierz_sasiedztwa_listw, zero.policy = TRUE)
+  G_permutations[i] <- permuted_getis$estimate["Geary C statistic"]
+}
+
+p_value <- (sum(G_permutations >= geary_c_statistic) + 1) / (n_permutations + 1)
+
+
+hist(G_permutations, main = "Rozkład permutacji statystyki Global C Gearyego", 
+     xlab = "Statystyka C Gearyego z permutacji", 
+     breaks = 30, col = "lightblue")
+abline(v = geary_c_statistic, col = "red", lwd = 2)
+
+
+print(paste("Statystyka Global C:", G))
+print(paste("Wartość oczekiwana E[C]:", E_G))
+print(paste("Wariancja Var[C]:", Var_G))
+print(paste("Statystyka Z (obliczona ręcznie):", Z_calculated))
+print(paste("Statystyka Z (z geary.test):", geary_c$statistic))
+print(paste("p-value dla testu permutacyjnego:", p_value))
+
+```
+Macierz sasiedztwa rzedu 4
+
+```{r}
+
+library(spdep)
+
+variable <- test.sf$ogółem
+
+geary_c <- geary.test(variable, listw = macierz_odleglosci_sasiad4_listw, zero.policy = TRUE)
+
+G <- geary_c$estimate["Geary C statistic"]
+E_G <- geary_c$estimate["Expectation"]
+Var_G <- geary_c$estimate["Variance"]
+
+if (Var_G > 0) {
+  Z_calculated <- (G - E_G) / sqrt(Var_G)
+} else {
+  Z_calculated <- NA
+  warning("Wariancja Var[C] jest ujemna lub zero, nie można obliczyć statystyki Z.")
+}
+
+
+set.seed(123)
+n_permutations <- 10000
+G_permutations <- numeric(n_permutations)
+
+geary_c_statistic <- geary.test(variable, listw = macierz_odleglosci_sasiad4_listw, zero.policy = TRUE)$estimate["Geary C statistic"]
+
+for (i in 1:n_permutations) {
+  variable_permuted <- sample(variable)
+  permuted_getis <- geary.test(variable_permuted, listw = macierz_odleglosci_sasiad4_listw, zero.policy = TRUE)
+  G_permutations[i] <- permuted_getis$estimate["Geary C statistic"]
+}
+
+p_value <- (sum(G_permutations >= geary_c_statistic) + 1) / (n_permutations + 1)
+
+
+hist(G_permutations, main = "Rozkład permutacji statystyki Global C Gearyego", 
+     xlab = "Statystyka C Gearyego z permutacji", 
+     breaks = 30, col = "lightblue")
+abline(v = geary_c_statistic, col = "red", lwd = 2)
+
+
+print(paste("Statystyka Global C:", G))
+print(paste("Wartość oczekiwana E[C]:", E_G))
+print(paste("Wariancja Var[C]:", Var_G))
+print(paste("Statystyka Z (obliczona ręcznie):", Z_calculated))
+print(paste("Statystyka Z (z geary.test):", geary_c$statistic))
+print(paste("p-value dla testu permutacyjnego:", p_value))
+
+```
+Macierz sasiedztwa oparta na cetroidach
+
+```{r}
+library(spdep)
+
+variable <- test.sf$ogółem
+
+geary_c <- geary.test(variable, listw = macierz_centroid_listw, zero.policy = TRUE)
+
+G <- geary_c$estimate["Geary C statistic"]
+E_G <- geary_c$estimate["Expectation"]
+Var_G <- geary_c$estimate["Variance"]
+
+if (Var_G > 0) {
+  Z_calculated <- (G - E_G) / sqrt(Var_G)
+} else {
+  Z_calculated <- NA
+  warning("Wariancja Var[C] jest ujemna lub zero, nie można obliczyć statystyki Z.")
+}
+
+
+set.seed(123)
+n_permutations <- 10000
+G_permutations <- numeric(n_permutations)
+
+geary_c_statistic <- geary.test(variable, listw = macierz_centroid_listw, zero.policy = TRUE)$estimate["Geary C statistic"]
+
+for (i in 1:n_permutations) {
+  variable_permuted <- sample(variable)
+  permuted_getis <- geary.test(variable_permuted, listw = macierz_centroid_listw, zero.policy = TRUE)
+  G_permutations[i] <- permuted_getis$estimate["Geary C statistic"]
+}
+
+p_value <- (sum(G_permutations >= geary_c_statistic) + 1) / (n_permutations + 1)
+
+
+hist(G_permutations, main = "Rozkład permutacji statystyki Global C Gearyego", 
+     xlab = "Statystyka C Gearyego z permutacji", 
+     breaks = 30, col = "lightblue")
+abline(v = geary_c_statistic, col = "red", lwd = 2)
+
+
+print(paste("Statystyka Global C:", G))
+print(paste("Wartość oczekiwana E[C]:", E_G))
+print(paste("Wariancja Var[C]:", Var_G))
+print(paste("Statystyka Z (obliczona ręcznie):", Z_calculated))
+print(paste("Statystyka Z (z geary.test):", geary_c$statistic))
+print(paste("p-value dla testu permutacyjnego:", p_value))
+
+```
+
+# Obliczenie Statystyki 𝐺 Getisa i Orda
+
+## Macierz sąsiedztwa rzędu 1
+
+### Statystyka Global G, Test permutacyjny, Test Z
+
+```{r}
+library(spdep)
+
+variable <- test.sf$ogółem
+
+getis_g <- globalG.test(variable, listw = macierz_sasiedztwa_listw, zero.policy = TRUE)
+
+G <- getis_g$estimate["Global G statistic"]
+E_G <- getis_g$estimate["Expectation"]
+Var_G <- getis_g$estimate["Variance"]
+
+if (Var_G > 0) {
+  Z_calculated <- (G - E_G) / sqrt(Var_G)
+} else {
+  Z_calculated <- NA
+  warning("Wariancja Var[G] jest ujemna lub zero, nie można obliczyć statystyki Z.")
+}
+
+
+set.seed(123)
+n_permutations <- 10000
+G_permutations <- numeric(n_permutations)
+
+getis_g_statistic <- globalG.test(variable, listw = macierz_sasiedztwa_listw, zero.policy = TRUE)$estimate["Global G statistic"]
+
+for (i in 1:n_permutations) {
+  variable_permuted <- sample(variable)
+  permuted_getis <- globalG.test(variable_permuted, listw = macierz_sasiedztwa_listw, zero.policy = TRUE)
+  G_permutations[i] <- permuted_getis$estimate["Global G statistic"]
+}
+
+p_value <- (sum(G_permutations >= getis_g_statistic) + 1) / (n_permutations + 1)
+
+
+hist(G_permutations, main = "Rozkład permutacji statystyki Global G Getisa", 
+     xlab = "Statystyka Getisa G z permutacji", 
+     breaks = 30, col = "lightblue")
+abline(v = getis_g_statistic, col = "red", lwd = 2)
+
+
+print(paste("Statystyka Global G:", G))
+print(paste("Wartość oczekiwana E[G]:", E_G))
+print(paste("Wariancja Var[G]:", Var_G))
+print(paste("Statystyka Z (obliczona ręcznie):", Z_calculated))
+print(paste("Statystyka Z (z globalG.test):", getis_g$statistic))
+print(paste("p-value dla testu permutacyjnego:", p_value))
+
+```
+
+## Macierz sąsiedztwa rzędu 4
+
+### Test Global G, Statystyka Z, Test permutacyjny 
+```{r}
+
+library(spdep)
+
+variable <- test.sf$ogółem
+getis_g <- globalG.test(variable, listw = macierz_odleglosci_sasiad4_listw, zero.policy = TRUE)
+G <- getis_g$estimate["Global G statistic"]
+E_G <- getis_g$estimate["Expectation"]
+Var_G <- getis_g$estimate["Variance"]
+
+# Obliczenie statystyki Z
+if (Var_G > 0) {
+  Z_calculated <- (G - E_G) / sqrt(Var_G)
+} else {
+  Z_calculated <- NA
+  warning("Wariancja Var[G] jest ujemna lub zero, nie można obliczyć statystyki Z.")
+}
+
+print("Wyniki testu Global G:")
+print(getis_g)
+
+print(paste("Statystyka Global G:", G))
+print(paste("Wartość oczekiwana E[G]:", E_G))
+print(paste("Wariancja Var[G]:", Var_G))
+print(paste("Statystyka Z (obliczona ręcznie):", Z_calculated))
+print(paste("Statystyka Z (z globalG.test):", getis_g$statistic))
+
+set.seed(123)
+n_permutations <- 10000
+G_permutations <- numeric(n_permutations)
+getis_g_statistic <- globalG.test(variable, listw = macierz_odleglosci_sasiad4_listw, zero.policy = TRUE)$estimate["Global G statistic"]
+
+for (i in 1:n_permutations) {
+  variable_permuted <- sample(variable)
+  permuted_getis <- globalG.test(variable_permuted, listw = macierz_odleglosci_sasiad4_listw, zero.policy = TRUE)
+  G_permutations[i] <- permuted_getis$estimate["Global G statistic"]
+}
+
+p_value <- (sum(G_permutations >= getis_g_statistic) + 1) / (n_permutations + 1)
+
+print(paste("p-value dla testu permutacyjnego:", p_value))
+
+hist(G_permutations, main = "Rozkład permutacji statystyki Global G Getisa", 
+     xlab = "Statystyka Getisa G z permutacji", 
+     breaks = 30, col = "lightblue")
+abline(v = getis_g_statistic, col = "red", lwd = 2)
+
+```
+
+
+## Macierz sąsiedztwa oparta na centroidach
+
+### Test Global G, Statystyka Z, Test permutacyjny 
+
+```{r}
+variable <- test.sf$ogółem
+
+getis_g <- globalG.test(variable, listw = macierz_centroid_listw, zero.policy = TRUE)
+
+G <- getis_g$estimate["Global G statistic"]
+E_G <- getis_g$estimate["Expectation"]
+Var_G <- getis_g$estimate["Variance"]
+
+if (Var_G > 0) {
+  Z_calculated <- (G - E_G) / sqrt(Var_G)
+} else {
+  Z_calculated <- NA
+  warning("Wariancja Var[G] jest ujemna lub zero, nie można obliczyć statystyki Z.")
+}
+
+print(paste("Statystyka Global G:", G))
+print(paste("Wartość oczekiwana E[G]:", E_G))
+print(paste("Wariancja Var[G]:", Var_G))
+print(paste("Statystyka Z (obliczona ręcznie):", Z_calculated))
+print(paste("Statystyka Z (z globalG.test):", getis_g$statistic))
+
+set.seed(123)
+n_permutations <- 10000
+G_permutations <- numeric(n_permutations)
+
+getis_g_statistic <- globalG.test(variable, listw = macierz_centroid_listw, zero.policy = TRUE)$estimate["Global G statistic"]
+
+for (i in 1:n_permutations) {
+  variable_permuted <- sample(variable)
+  permuted_getis <- globalG.test(variable_permuted, listw = macierz_centroid_listw, zero.policy = TRUE)
+  G_permutations[i] <- permuted_getis$estimate["Global G statistic"]
+}
+
+p_value <- (sum(G_permutations >= getis_g_statistic) + 1) / (n_permutations + 1)
+
+print(paste("p-value dla testu permutacyjnego:", p_value))
+
+hist(G_permutations, main = "Rozkład permutacji statystyki Global G Getisa", 
+     xlab = "Statystyka Getisa G z permutacji", 
+     breaks = 30, col = "lightblue")
+abline(v = getis_g_statistic, col = "red", lwd = 2)
+```
+
+
+
+
+```{r}
+
+# Funkcja do testu permutacyjnego dla statystyki Morana
+perform_moran_permutation_test <- function(variable, listw, n_permutations = 10000) {
+  # Test Morana
+  moran_result <- moran.test(variable, listw = listw, zero.policy = TRUE)
+  I_observed <- moran_result$estimate["Moran I statistic"]
+  E_I <- moran_result$estimate["Expectation"]
+  Var_I <- moran_result$estimate["Variance"]
+  
+  # Obliczenie statystyki Z
+  if (Var_I > 0) {
+    Z_calculated <- (I_observed - E_I) / sqrt(Var_I)
+  } else {
+    Z_calculated <- NA
+    warning("Wariancja Var[I] jest ujemna lub zero, nie można obliczyć statystyki Z.")
+  }
+  
+  # Permutacje
+  set.seed(123)
+  I_permutations <- numeric(n_permutations)
+  for (i in 1:n_permutations) {
+    variable_permuted <- sample(variable)
+    permuted_moran <- moran.test(variable_permuted, listw = listw, zero.policy = TRUE)
+    I_permutations[i] <- permuted_moran$estimate["Moran I statistic"]
+  }
+  
+  # p-value z permutacji
+  p_value <- (sum(I_permutations >= I_observed) + 1) / (n_permutations + 1)
+  
+  # Wizualizacja rozkładu permutacji
+  hist(I_permutations, main = "Rozkład permutacji statystyki Morana", 
+       xlab = "Statystyka Morana z permutacji", 
+       breaks = 30, col = "lightblue")
+  abline(v = I_observed, col = "red", lwd = 2)
+  
+  # Wyniki
+  list(
+    I_observed = I_observed,
+    E_I = E_I,
+    Var_I = Var_I,
+    Z_calculated = Z_calculated,
+    p_value = p_value
+  )
+}
+
+cat("Macierz sąsiedztwa rzędu 1:\n")
+results_r1 <- perform_moran_permutation_test(test.sf$ogółem, listw = macierz_sasiedztwa_listw)
+print(results_r1)
+
+cat("\nMacierz sąsiedztwa rzędu 4:\n")
+results_r4 <- perform_moran_permutation_test(test.sf$ogółem, listw = macierz_odleglosci_sasiad4_listw)
+print(results_r4)
+
+
+cat("\nMacierz sąsiedztwa oparta na centroidach:\n")
+results_centroid <- perform_moran_permutation_test(test.sf$ogółem, listw = macierz_centroid_listw)
+print(results_centroid)
+```
+
+
+Korelogram i wykres rozproszenia.
+
+```{r}
+wojewodztwa_labels <- c("ZACHODNIOPOMORSKIE", "LUBUSKIE", "DOLNOŚLĄSKIE", "WIELKOPOLSKIE", 
+                        "POMORSKIE", "OPOLSKIE", "KUJAWSKO-POMORSKIE", "ŚLĄSKIE", 
+                        "ŁÓDZKIE", "MAŁOPOLSKIE", "WARMIŃSKO-MAZURSKIE", "MAZOWIECKIE", 
+                        "ŚWIĘTOKRZYSKIE", "PODKARPACKIE", "PODLASKIE", "LUBELSKIE")
+
+
+moran_plot <- moran.plot(dane, listw = macierz_sasiedztwa_listw, 
+                         xlab = "Wartości zmiennej", ylab = "Wartości przestrzenne sąsiadów",
+                         main = "Wykres rozproszenia I Morana",
+                         xlim = c(min(dane) - 0.1 * diff(range(dane)), max(dane) + 0.1 * diff(range(dane))),
+                         ylim = c(min(lag.listw(macierz_sasiedztwa_listw, dane)) - 0.1 * diff(range(lag.listw(macierz_sasiedztwa_listw, dane))),
+                                  max(lag.listw(macierz_sasiedztwa_listw, dane)) + 0.1 * diff(range(lag.listw(macierz_sasiedztwa_listw, dane)))))
+
+
+text(dane, lag.listw(macierz_sasiedztwa_listw, dane), labels = wojewodztwa_labels, pos = 4, cex = 0.7)
+
+moran_correlogram <- sp.correlogram(sasiedzi, test.sf$ogółem, order = 4, method = "I",
+                                    style = "W", zero.policy = TRUE)
+plot(moran_correlogram, main = "Korelogram I Morana ")
+
+```
