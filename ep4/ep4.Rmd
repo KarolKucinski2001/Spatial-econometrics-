@@ -1,0 +1,161 @@
+---
+title: "ep4"
+author: "Księżyc Krzysztof, Maciej Nagły, Karol Kuciński"
+date: "2024-12-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(MASS)
+library(readxl)
+library(tidyverse)
+library(strucchange)
+library(spdep)
+dane1 <- read_excel("C:/Users/karol/OneDrive/Pulpit/dane_ep4.xlsx")
+dane1$`metr`<-as.numeric(dane$`metr`)
+dane1<- as.data.frame(dane)
+
+```
+
+```{r}
+model <- lm(metr~wynagrodzenie+oddane+log(malzenstwa), data=dane1)
+summary(model)
+
+```
+
+
+```{r}
+library(sp)
+library(spdep)
+library(readxl)
+library(tidyverse)
+library(sf)
+library(BAMMtools)
+library(st)
+#dane <- read_excel("C:/Users/karol/OneDrive/Pulpit/dane1.xlsx")
+dane <- read_excel("C:/Users/karol/OneDrive/Pulpit/dane_ep4.xlsx")
+mapka <- st_read("C:/Users/karol/OneDrive/Pulpit/EP_finalProject/ep4/powiaty.shp")
+test.sf <- mapka %>%
+  left_join(dane) %>%
+  st_as_sf(crs = 4326)
+
+nb <- poly2nb(mapka) 
+lw <- nb2listw(nb, style="W") 
+```
+
+
+```{r}
+test.sf$metr_cat <- cut(test.sf$metr, 
+                          breaks = c(15633, 9119, 6657, 5179, 4057, 2389), 
+                          labels = c("4057 - 2389", "5179 - 4058", "6657 - 5180", "9119 - 6658", "15633 - 9120"))
+
+test.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = metr_cat)) +
+  scale_fill_manual(values = c("lightblue", "skyblue", "steelblue", "darkblue", "navy")) + # Ustawianie kolorów dla przedziałów
+  theme_bw() +
+  labs(fill = "Średnia cena za metr^2")
+```
+```{r}
+test.sf$oddane_cat <- cut(test.sf$oddane, 
+                          breaks = c(28, 154, 265, 700, 2999, 15466), 
+                          labels = c("28 - 153", "154 - 264", "265 - 699", "700 - 2998", "2999 - 15466"))
+test.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = oddane_cat)) +
+  scale_fill_manual(values = c("lightblue", "skyblue", "steelblue", "darkblue", "navy")) +
+  theme_bw() +
+  labs(fill = "Oddane nieruchomości w 2022r.")
+```
+
+```{r}
+
+test.sf$wynagrodzenie_cat <- cut(test.sf$wynagrodzenie, 
+                          breaks = c(4668, 5531, 6105, 7077, 8988, 11362), 
+                          labels = c("4668-5531","5532-6105","6106-7077","7078-8988","8989-11362"))
+
+test.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = wynagrodzenie_cat)) +
+  scale_fill_manual(values = c("lightblue", "skyblue", "steelblue", "darkblue", "navy"))+
+  theme_bw() +
+  labs(fill = "Średnie wynagrodzenie  w 2022r.")
+```
+
+```{r}
+test.sf$malzenstwa_cat <- cut(test.sf$malzenstwa, 
+                          breaks = c(64,445,1300, 2692, 4686, 8743), 
+                          labels = c("64-444","445-1300","1300-2691","2692-4685","4686-8743"))
+
+test.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = malzenstwa_cat)) +
+  scale_fill_manual(values = c("lightblue", "skyblue", "steelblue", "darkblue", "navy"))+
+  theme_bw() +
+  labs(fill = "Ilosc małżeństw w 2022r.")
+
+```
+```{r}
+
+moran.test(residuals(model), lw)
+lm.morantest(model,lw, alternative="two.sided")
+##tutaj sie trzeba zastanowić, są dwa wyniki.
+```
+
+```{r}
+library(spatialreg)
+# Model SAR
+sar_model <- lagsarlm(metr ~wynagrodzenie + oddane + log(malzenstwa), data=dane, lw)
+
+# Model SEM
+sem_model <- errorsarlm(metr ~wynagrodzenie + oddane + log(malzenstwa), data=dane, lw)
+
+#Porównanie modeli
+summary(sar_model)
+summary(sem_model)
+
+# Test porównawczy
+AIC(model, sar_model, sem_model)
+
+```
+
+```{r}
+# Obliczanie RSS i TSS
+rss_sar <- sum(residuals(sar_model)^2)
+rss_sem <- sum(residuals(sem_model)^2)
+tss <- sum((dane$metr - mean(dane$metr))^2)
+
+# Pseudo-R^2
+r2_sar <- 1 - (rss_sar / tss)
+r2_sem <- 1 - (rss_sem / tss)
+
+# Wyświetlenie wyników
+cat("Pseudo-R^2 dla SAR:", r2_sar, "\n")
+cat("Pseudo-R^2 dla SEM:", r2_sem, "\n")
+```
+Nie ma różnicy miedzy tym a modelem liniowym, ale czytałem że to r2 jest nieprzydatne bo duzo ważneijsze jest lambda i p
+
+Tutaj chyba niestotne, bo to nie nasz model
+```{r}
+##zmiana modelu na metr~wynagrodzenie+oddane
+
+
+model1<- lm(metr~wynagrodzenie + oddane, data= dane)
+sar_model <- lagsarlm(metr ~wynagrodzenie + oddane, data=dane, lw)
+
+sem_model <- errorsarlm(metr ~wynagrodzenie + oddane, data=dane, lw)
+
+
+summary(sar_model)
+summary(sem_model)
+
+AIC(model1, sar_model, sem_model)
+```
+
+```{r}
+LM <- lm.LMtests(model, lw, test="all")
+print(LM)
+
+
+```
+
