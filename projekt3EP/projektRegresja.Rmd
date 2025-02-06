@@ -1,0 +1,189 @@
+---
+title: "EP3"
+author: "Księżyc Krzysztof,Nagły Maciej, Kuciński Karol"
+date: "2024-11-27"
+output: html_document
+---
+```{r warning=FALSE, include=FALSE}
+library(MASS)
+library(readxl)
+library(tidyverse)
+library(strucchange)
+dane <- read_excel("/Users/kksiezyc/Desktop/ekonometria /dane.xlsx")
+dane$`metr`<-as.numeric(dane$`metr`)
+dane<- as.data.frame(dane)
+dane$nazwa <- factor(dane$nazwa)
+```
+Projekt regresji wielorakiej.
+
+
+W niniejszym projekcie celem jest skonstruowanie modelu regresji wielorakiej, który pozwoli na zbadanie czynników wpływających na cenę za metr kwadratowy nieruchomości w poszczególnych powiatach Polski.
+
+Zmienna objaśniana użyta w projekcie to cena za metr kwadratowy nieruchomości czyli średnia cena nieruchomości w złotówkach za m². Zdecydowaliśmy się na nią, bo odzwierciedla ona warunki rynkowe oraz poziom atrakcyjności nieruchomości w każdym powiecie.
+
+Zmienne objaśniające które wzieliśmy do analizy to:
+
+1.	Wynagrodzenie brutto średnie miesięczne - średnia wysokość wynagrodzenia brutto w danym powiecie. 
+Wyższe wynagrodzenie często wiąże się z większym popytem na nieruchomości, co może wpływać na wyższe ceny.
+
+2.	Liczba oddanych mieszkań w roku - liczba nowych nieruchomości oddanych do użytku w danym powiecie. 
+Ta zmienna może mieć zarówno dodatni, jak i ujemny wpływ na cenę nieruchomości.
+
+3.	Tereny zielone - powierzchnia terenów zielonych w hektarach. 
+Atrakcyjność powiatów z dużą ilością terenów zielonych może przyciągać mieszkańców, co podnosi wartość nieruchomości.
+
+4.	Liczba działających przedszkoli- Liczba przedszkoli w powiecie jako wskaźnik dostępności infrastruktury edukacyjnej. 
+Jest to istotne dla rodzin z dziećmi, co może wpływać na ceny nieruchomości.
+
+5.	Liczba zawartych małżeństw w roku -Liczba małżeństw w powiecie jako wskaźnik demograficzny. 
+Większa liczba małżeństw może wskazywać na większe zapotrzebowanie na mieszkania.
+
+Cel projektu
+
+Głównym celem projektu jest analiza wpływu wymienionych zmiennych objaśniających na ceny nieruchomości w powiatach Polski. Określenie, które czynniki mają istotny statystycznie wpływ na ceny nieruchomości, zbadanie czy istnieją istotne różnice przestrzenne w analizowanych zależnościach oraz interpretacji wyników modelu.
+
+Na początek zobrazowanie danych dla powiatów:
+```{r}
+head(dane)
+```
+Zobaczmy macierz korelacji dla poszczególnej zmiennej (nie jest to obowiązkowe, natomiast może zobrazować ich zmienność).
+Pierwotny model regresji obejmuje wszystkie zmienne objaśniające:
+
+
+Metr = wynagrodzenie+ oddane+ przedszkola+ małżeństwa+ tereny
+
+```{r}
+cor_matrix <- cor(dane[, 2:ncol(dane)])
+print(cor_matrix)
+
+model<-lm(metr~wynagrodzenie+oddane+przedszkola+malzenstwa+tereny, data=dane)
+summary(model)
+
+```
+	
+Wyniki korelacji:
+Zmienne oddane, przedszkola, malzenstwa, i tereny są ze sobą silnie skorelowane (wartości powyżej 0.8).
+wynagrodzenie jest umiarkowanie skorelowane z metr (0.37) oraz innymi zmiennymi (korelacje w przedziale 0.39–0.43).
+Oddane i metr mają stosunkowo wysoką korelację (0.52), co sugeruje, że ta zmienna może być istotna w modelu.
+
+Wyniki modelu:
+
+R-squared- 0.3086, co oznacza, że około 30.86% zmienności zmiennej zależnej jest wyjaśniane przez zmienne objaśniające.
+Adjusted R²: 0.2994- wskazuje na umiarkowane dopasowanie modelu.
+F-statistic: 33.39, a wartość p-value jest bardzo niska - model jako całość jest istotny statystycznie.
+
+Współczynniki regresji i ich istotność:
+
+	wynagrodzenie (0.42596, p < 0.001): Istotny wpływ na zmienną zależną.
+	oddane (0.76650, p < 0.001): Również istotny wpływ. 
+	przedszkola (5.81920, p = 0.273): Brak istotności statystycznej (p > 0.05). Ta zmienna może zostać usunięta w procesie redukcji.
+	malzenstwa (-1.06960, p = 0.084): Sugeruje wpływ bliski istotności (p < 0.1).
+	tereny (0.04497, p = 0.933): Zmienna jest całkowicie nieistotna (p > 0.9). Zostanie usunięta w procesie redukcji.
+
+
+W oparciu o wyniki testów istotności i analizy dopasowania modelu, zmienne takie jak przedszkola i tereny mogą zostać usunięte, aby poprawić interpretację modelu.
+
+RSE (Standardowy Błąd Reszt) dostarcza miary błędu przewidywania. Im niższa wartość RSE, tym bardziej dokładny model (dla dostępnych danych).
+Stopę błędu można oszacować, dzieląc wartość RSE przez średnią wartość zmiennej zależnej (wyniku).
+```{r}
+
+##sigma RSE
+RSE <- sigma(model)/mean(dane$metr)
+RSE
+chow_test <- sctest(model, type = "Chow", point = 16) 
+chow_test
+
+```
+Teraz sprawdzamy RSE.
+Wyszedł model niestabilny - p.value pokazuje wartość mniejszą niż 5 %. 
+W związku z tym można zastanawiać się czy przypadkiem nie trzeba zmodyfikować modelu.
+```{r}
+confint(model)
+```
+Przedziały ufności do współczynników regresji.
+Wynika stąd, że zmienne przedszkola, malzenstwa i tereny mogą nie być istotne statystycznie, ponieważ ich przedziały ufności zawierają 0, czyli ich wpływ na zmienną zależną może być losowy.
+
+Teraz zostanie przeprowadzenie redukcji zmiennych w oparciu o metodę stepwise regression (AIC), aby zoptymalizować model oraz sprawdzenie stabilności parametrów modelu oraz dalsza analiza wpływu istotnych zmiennych.
+Będzie trzeba zastosować redukcje zmiennej objaśniającej. Ta metoda może być rozwiązana na kilka sposobów.
+Zrobimy to kryterium informacyjnym: Metoda krokowa wsteczna AIC
+```{r}
+stepAIC(model)
+```
+
+Model uwzględnia wszystkie zmienne objaśniające.
+Metoda wsteczna analizuje, jak usunięcie każdej zmiennej wpłynie na AIC. Decyzja o usunięciu zmiennej jest podejmowana na podstawie tego, która zmienna powoduje największy spadek AIC.
+
+1: Usunięcie zmiennej tereny
+Analizując wpływ usunięcia każdej zmiennej:
+Usunięcie tereny powoduje spadek AIC z 5454.55 do 5452.6.
+
+Zmienna tereny zostaje usunięta.
+
+Nowy model już jest bez zmiennej tereny.
+
+
+2: Usunięcie zmiennej przedszkola
+
+W kolejnym kroku analizuje się wpływ usunięcia pozostałych zmiennych:
+Usunięcie przedszkola powoduje spadek AIC do 5451.8.
+
+Zmienna przedszkola zostaje usunięta.
+
+3: Analiza końcowa
+
+Po usunięciu zmiennych tereny i przedszkola metoda wsteczna sprawdza, czy dalsze usunięcia zmiennych poprawią wartość AIC:
+Wszystkie AIC w zmiennych wzrastają.
+
+Żadna z pozostałych zmiennych nie zostaje usunięta. Proces redukcji kończy się.
+
+Teraz sprawdzimy metode Stepowa wsteczną klasyczna
+```{r}
+dane_wsteczna <- step(model,direction="backward")
+```
+Metoda klasyczna w tym przypadku pokazała takie same kroki, jak w przypadu metody AIC, także obie uwzględniam do redukcji zmiennych.
+
+Teraz sprawdzmy stabilnośc nowego modelu:
+```{r}
+model_koncowy <- lm(metr~wynagrodzenie+oddane+malzenstwa, data=dane)
+chow_test <- sctest(model_koncowy, type = "Chow", point = 16) 
+chow_test
+```
+P-value= 0.25 pokazuje, że model jest stabilny.
+
+Przed nami model końcowy:
+
+Model: Mter= wynagrodzenie + oddane + małżeństwa 
+```{r}
+model_koncowy <- lm(metr~wynagrodzenie+oddane+malzenstwa, data=dane)
+summary(model_koncowy)
+```
+Interpretacja współczynników w modelu regresji
+
+Wyraz wolny: 2092.37- przewidywana wartość zmiennej zależnej (ceny za metr kwadratowy) przy założeniu, że wszystkie zmienne objaśniające (wynagrodzenie, oddane, malzenstwa) są równe 0.
+
+ wynagrodzenie: 0.4328- Wzrost średniego wynagrodzenia brutto miesięcznego o 1 zł wiąże się z przeciętnym wzrostem ceny za metr kwadratowy nieruchomości o 0.43 zł, przy założeniu, że inne zmienne pozostają stałe.
+
+oddane: 0.7922- Wzrost liczby oddanych mieszkań o 1 (np. oddanie jednego dodatkowego mieszkania) wiąże się z przeciętnym wzrostem ceny za metr kwadratowy nieruchomości o 0.79 zł, przy założeniu, że inne zmienne pozostają stałe.
+
+malzenstwa: -0.5754- Wzrost liczby zawartych małżeństw o 1 wiąże się z przeciętnym spadkiem ceny za metr kwadratowy nieruchomości o 0.58 zł, przy założeniu, że inne zmienne pozostają stałe.
+Może to sugerować, że większa liczba małżeństw w danym powiecie niekoniecznie prowadzi do wzrostu cen nieruchomości. 
+
+Największy wpływ na ceny nieruchomości ma liczba oddanych mieszkan- jest to zrozumiałe, ponieważ liczba nowych mieszkań jest bezpośrednio związana z dynamiką rynku nieruchomości.
+Wynagrodzenie (wynagrodzenie) także znacząco wpływa na ceny- Im wyższe zarobki - może większy popytu na mieszkania i wyższych cen.
+Liczba zawartych małżeństw (malzenstwa) ma ujemny wpływ, warta rozważenie istotnośći.
+
+
+Statystyki dopasowania modelu
+
+Model wyjaśnia 30.64% zmienności zmiennej zależnej (metr) w danych-	To umiarkowany poziom dopasowania, co sugeruje, że są inne czynniki, które mogą wpływać na ceny nieruchomości.
+	Adjusted R-squared: 0.30 -skorygowana o liczbę zmiennych w modelu również wynosi około 30%, co potwierdza stabilność dopasowania modelu.
+	F-statistic: 55.36 - Model jako całość jest istotny statystycznie, co oznacza, że przynajmniej jedna ze zmiennych objaśniających znacząco wpływa na zmienną zależną (metr).
+
+Podsumowanie:
+
+Ostateczny model regresji wielorakiej opisuje zależność ceny za metr kwadratowy nieruchomości (metr) od trzech zmiennych objaśniających: średniego wynagrodzenia brutto miesięcznego, liczby oddanych mieszkań w roku oraz liczby zawartych małżeństw w powiecie w roku. 
+Zmienne istotne statystycznie to wynagrodzenie: Im wyższe średnie wynagrodzenie, tym wyższe ceny za metr kwadratowy nieruchomości.
+Również jest zależność- Im więcej oddanych mieszkań, tym wyższe ceny za metr kwadratowy nieruchomości.
+Liczba zawartych małżeństw nie ma istotnego wpływu na ceny nieruchomości, chociaż może być brana pod uwagę jako potencjalny czynnik w dalszych analizach.
+Myśle, że w przypadku przestrzennej analizy gdzie rozważy uwzględnienie dodatkowych zmiennych w modelu, takich jak lokalizacja (np. bliskość dużych miast). W przyszłych analizach trzeba zastosować techniki ekonometrii przestrzennej, gdzie uwzględnimy wpływy sąsiednich powiatów na ceny nieruchomości.
+
