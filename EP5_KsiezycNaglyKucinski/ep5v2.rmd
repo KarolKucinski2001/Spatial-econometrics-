@@ -1,0 +1,228 @@
+---
+title: "ep5"
+author: "Księżyc Krzysztof, Maciej Nagły, Karol Kuciński"
+date: "2025-01-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(sp)
+library(spdep)
+library(readxl)
+library(tidyverse)
+library("sf")
+library(BAMMtools)
+dane2013 <- read_excel("dane2013.xlsx")
+mapka <- st_read("powiaty.shp")
+test2013.sf <- mapka %>%
+  left_join(dane2013) %>%
+  st_as_sf(crs = 4326)
+```
+uzupełnianie brków danych
+```{r}
+
+mediana <- median(dane2013$`ogółem 2013`)
+for(i in 1:380)
+{
+  if((is.na(test2013.sf[i,37]))[1] == TRUE)
+  {
+    test2013.sf[i,37] <- mediana
+  }
+}
+```
+
+
+
+```{r}
+test2013.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = test2013.sf$`ogółem 2013`)) +
+  theme_bw() +
+  labs(fill = "Średnia cena za metr^2")
+```
+
+```{r}
+dane2022 <- read_excel("dane2022.xlsx")
+mapka <- st_read("powiaty.shp")
+test2022.sf <- mapka %>%
+  left_join(dane2022) %>%
+  st_as_sf(crs = 4326)
+
+nb <- poly2nb(mapka) 
+lw <- nb2listw(nb, style="W") 
+
+test2022.sf$metr_cat <- cut(test2022.sf$metr, 
+                          breaks = c(15633, 9119, 6657, 5179, 4057, 2389), 
+                          labels = c("4057 - 2389", "5179 - 4058", "6657 - 5180", "9119 - 6658", "15633 - 9120"))
+
+test2022.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = metr_cat)) +
+  scale_fill_manual(values = c("lightblue", "skyblue", "steelblue", "darkblue", "navy")) + 
+  theme_bw() +
+  labs(fill = "Średnia cena za metr^2")
+```
+
+```{r}
+centroidy <- st_centroid(test2022.sf)
+macierz_odleglosci <- st_distance(centroidy)
+macierz_odleglosci_km <- as.numeric(macierz_odleglosci) / 1000
+macierz_odleglosci_km <- matrix(macierz_odleglosci_km, nrow = nrow(test2022.sf), ncol = nrow(test2022.sf))
+macierz_odleglosci_zaokraglone <- round(macierz_odleglosci_km, 2)
+```
+Liczenie potencjału
+
+
+```{r}
+for (i in 1:380)
+{
+  macierz_odleglosci_zaokraglone[i,i] <- 1
+}
+
+wyniki_df <- data.frame(
+  Potencjal = numeric()   
+)
+wyniki_df_final <- data.frame(
+  Potencjal = numeric()   
+)
+
+
+for (i in 1:380) {
+  potencjal <- 0
+  for (j in 1:380) {
+      suma1 <- test2022.sf$metr[j] / macierz_odleglosci_zaokraglone[i, j]
+      wyniki_df[j,1] <-suma1 
+  }
+  wyniki_df_final[i,1] <- sum(wyniki_df[,1])
+}
+
+```
+
+```{r}
+wyniki_df_final2022<- wyniki_df_final[,1]
+wyniki_df_final2022
+
+```
+
+```{r}
+
+test2022.sf$potencjal2022 <- wyniki_df_final2022 
+
+test2022.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = potencjal2022)) +
+  scale_fill_viridis_c(option = "plasma", name = "Potencjał") + 
+  theme_minimal() +
+  labs(title = "Potencjał przestrzenny powiatów 2022")
+```
+
+```{r}
+for (i in 1:380)
+{
+  macierz_odleglosci_zaokraglone[i,i] <- 1
+}
+wyniki_df1 <- data.frame(
+  Potencjal = numeric()   
+)
+wyniki_df_final1 <- data.frame(
+  Potencjal = numeric()   
+)
+
+for (i in 1:380) {
+  potencjal <- 0
+  for (j in 1:380) {
+      suma1 <- test2013.sf$`ogółem 2013`[j] / macierz_odleglosci_zaokraglone[i, j]
+      wyniki_df1[j,1] <-suma1 
+  }
+  wyniki_df_final1[i,1] <- sum(wyniki_df1[,1])
+}
+```
+
+```{r}
+wyniki_df_final2013<- wyniki_df_final1[,1]
+wyniki_df_final2013
+```
+
+```{r}
+test2013.sf$potencjal2013 <- wyniki_df_final2013 
+
+test2013.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = potencjal2013)) +
+  scale_fill_viridis_c(option = "plasma", name = "Potencjał") + 
+  theme_minimal() +
+  labs(title = "Potencjał przestrzenny powiatów 2013")
+```
+```{r}
+test2022.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = potencjal2022)) +
+  scale_fill_viridis_c(option = "plasma", name = "Potencjał") + 
+  theme_minimal() +
+  labs(title = "Potencjał przestrzenny powiatów 2022")
+
+test2013.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = potencjal2013)) +
+  scale_fill_viridis_c(option = "plasma", name = "Potencjał") + 
+  theme_minimal() +
+  labs(title = "Potencjał przestrzenny powiatów 2013")
+```
+
+Iloraz
+
+```{r}
+test2022.sf$potencjal2013 <- wyniki_df_final2013
+
+test2022.sf %>% 
+  ggplot() +
+  geom_sf(aes(fill = potencjal2022/potencjal2013)) +
+  scale_fill_viridis_c(option = "plasma", name = "Potencjał") + 
+  theme_minimal() +
+  labs(title = "Iloraz potencjału przestrzennego powiatów 2022")
+```
+
+
+```{r}
+
+iloraz <- test2022.sf %>%
+  mutate(ratio = potencjal2022 / potencjal2013)
+
+
+iloraz %>%
+  arrange(desc(ratio)) %>%  
+  slice_head(n = 5) %>%
+  select(JPT_NAZWA_, ratio) 
+```
+```{r}
+iloraz %>%
+  arrange(ratio) %>%  
+  slice_head(n = 5) %>%
+  select(JPT_NAZWA_, ratio)
+```
+
+
+```{r}
+test2022.sf %>%
+  mutate(ratio = potencjal2022 / potencjal2013) %>%
+  arrange(ratio) %>%
+  slice(c(1:5, (n()-4):n())) %>%
+  ggplot() +
+  geom_sf(aes(fill = ratio)) +
+  scale_fill_viridis_c(option = "plasma", name = "Potencjał") + 
+  theme_minimal() +
+  labs(title = "Iloraz potencjału przestrzennego powiatów 2022")
+```
+```{r}
+test2022.sf %>%
+  mutate(ratio = potencjal2022 / potencjal2013) %>%
+  arrange(ratio) %>%
+  mutate(ratio_filtered = ifelse(row_number() %in% c(1:20, (n()-19):n()), ratio, NA)) %>%
+  ggplot() +
+  geom_sf(aes(fill = ratio_filtered)) +
+  scale_fill_viridis_c(option = "plasma", name = "Potencjał", na.value = "grey90") + 
+  theme_minimal() +
+  labs(title = "Iloraz potencjału przestrzennego powiatów (Top 20 i Bottom 20)")
+
+```
+
